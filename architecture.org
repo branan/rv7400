@@ -1,0 +1,140 @@
+* Bus
+** Data
+*** A[31:0]
+first operand to an operation
+*** B[31:0]
+second operand to an operation
+*** Y[31:0]
+result of an operation
+
+** Control
+
+*** AR[4:0]
+Select which of 31 registers is output to A. 0 indicates no register
+should output data.
+
+*** BR[4:0]
+Select which of 31 registers is output to B. 0 indicates no register
+should output data.
+
+*** YR[4:0]
+Select which of 31 registers is latched on CLK. 0 indicates no
+register should latch data.
+
+*** MREAD[0]
+Memory address encoded in A and B will be output to Y
+
+*** MWRITE[0]
+Memory address encoded in A and Y will be latched to the value of B on
+CLK.
+
+*** FUNC[2:0]
+The FUNCT3 signals from a Risc-V instruction
+
+*** INSTR30[0]
+The 10th immediate bit, used as an extra func bit by some risc-v
+instructions
+
+*** CLK[0]
+The clock
+
+* Operation
+Most instructions complete in two cycles. Some instructions (memory
+load/stores and JALR) require 3.
+
+For two-cycle instructions, there are two phases: FETCH and EXECUTE.
+
+For three-cycle instructions, EXECUTE is extended to two cycles, with
+the second phase additionally being flagged as HOLD
+
+** Fetch
+*** All control lines are set to 0 except MREAD and FUNC
+*** MREAD is set to 1
+*** FUNC is set to 0b010
+*** A is set to PC
+*** B is set to 0
+*** PC is latched from Y
+
+** Execution
+*** Control lines are set based on decoded instruction.
+*** For three-cycle instructions, these are the ALU phase.
+
+** Execution/Hold
+*** For three-cycle instructions, the action is taken based on the ALU result.
+
+* Decoding
+
+** Instructions
+0b00000 LOAD
+0b01000 STORE
+0b00100 OP-I
+0b01100 OP-R
+0b00101 AUIPC
+0b01101 LUI
+0b11000 BRANCH
+0b11001 JALR
+0b11011 JAL
+
+** Helpful Names
+LINK: JAL | JALR
+UPPER: AUIPC | LUI
+OP: OP-I | OP-R
+
+** Decoder Signals
+
+UPPER: instr[0] & ~instr[4]
+LINK: instr[0] & instr[4]
+OP: ~instr[0] & instr[2]
+BRANCH: ~instr[0] & instr[4]
+JAL: instr[1]
+OP-R: OP & instr[3]
+OP-I: OP & ~instr[3]
+LOAD: ~instr[2] & ~instr[3] & ~instr[4]
+STORE: ~instr[2] & instr[3] & ~instr[4]
+LUI: UPPER & instr[3]
+AUIPC: UPPER & ~instr[3]
+
+** Bus Signals
+
+ALU: 0: ~HOLD & EXEC
+     1: else
+
+MR: 1: (HOLD & LOAD & EXEC) | ~EXEC
+    0: else
+MW: 1: HOLD & STORE & EXEC
+    0: else
+
+RA: rs1: ~HOLD & ~UPPER & ~JAL & EXEC
+      0: else
+RB: rs2: (HOLD & STORE & EXEC) | (~HOLD & OP-R & EXEC) | (~HOLD & BRANCH & EXEC)
+      0: else
+RY:  rd: (HOLD & LOAD & EXEC) | (HOLD & LINK & EXEC) | (~HOLD & OP-R & EXEC) | (~HOLD & OP-I & EXEC) | (~HOLD & UPPER & EXEC)
+      0: else
+
+A:  pc: (AUIPC & EXEC) | ~EXEC
+  addr: (HOLD & LOAD) | (HOLD & STORE)
+     0: (LUI & EXEC) | (JAL & EXEC)
+     z: else
+B: imm: (UPPER & EXEC) | (OP-I & EXEC) | (~HOLD & LINK & EXEC)
+     z: else
+Y:  pc: (HOLD & LINK)
+     z: else
+
+INSTR30: OP-R & EXEC & INSTR[30] | BRANCH & ~FUNC[2] & EXEC
+FUNC: instr[12-14]: ~BRANCH & ~UPPER & ~JAL & EXEC
+                 0: UPPER & EXEC | JAL & EXEC
+               010: BRANCH & ~FUNC[1] & EXEC | ~EXEC
+               011: BRANCH & FUNC[1] & EXEC
+
+** Other Signals
+
+JADDR: HOLD & JALR & EXEC
+JIMM: ~HOLD & JAL & EXEC
+ADDR_CLK: CLK & EXEC & ~HOLD
+INST_CLK: CLK & ~EXEC
+NEED_HOLD: (~HOLD & EXEC & LOAD) | (~HOLD & EXEC & STORE) | (~HOLD & EXEC & JALR)
+IMM_I: OP-I & ~EXEC & ~HOLD | LOAD & ~EXEC & ~HOLD | JALR & ~EXEC & ~HOLD
+IMM_J: JAL & ~EXEC & ~HOLD
+IMM_U: UPPER & ~EXEC & ~HOLD
+IMM_B: BRANCH & ~EXEC & ~HOLD
+IMM_S: STORE & ~EXEC & ~HOLD
